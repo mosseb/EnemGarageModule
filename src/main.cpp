@@ -29,12 +29,15 @@ unsigned long lastGoGateCmd = 0;
 bool garageGoHandler(const HomieRange& range, const String& value)
 {
   goGarage=true;
+  Homie.getLogger() << "GoGarage !!!" << endl;
+  printf("GNARF !");
   return true;
 }
 
 bool gateGoHandler(const HomieRange& range, const String& value)
 {
   goGate=true;
+  Homie.getLogger() << "GoGate !!!" << endl;
   return true;
 }
 
@@ -80,6 +83,7 @@ void loopHandler()
         digitalWrite(PIN_GO_GARAGE, LOW);
         lastGoGarageCmd = 0;
         goGarage = false;
+        Homie.getLogger() << "GoGarage fini !!!" << endl;
     }
   }
 
@@ -96,6 +100,7 @@ void loopHandler()
         digitalWrite(PIN_GO_GATE, LOW);
         lastGoGateCmd = 0;
         goGate = false;
+        Homie.getLogger() << "GoGate fini !!!" << endl;
     }
   }
 }
