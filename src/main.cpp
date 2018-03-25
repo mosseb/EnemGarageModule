@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Homie.h>
+#include <ESP8266FtpServer.h>
 
 const int PIN_OPENED_SENSOR = D1;
 const int PIN_CLOSED_SENSOR = D2;
@@ -25,12 +26,12 @@ bool goGate = false;
 unsigned long lastGoGarageCmd = 0;
 unsigned long lastGoGateCmd = 0;
 
+FtpServer ftpSrv;
 
 bool garageGoHandler(const HomieRange& range, const String& value)
 {
   goGarage=true;
   Homie.getLogger() << "GoGarage !!!" << endl;
-  printf("GNARF !");
   return true;
 }
 
@@ -41,8 +42,15 @@ bool gateGoHandler(const HomieRange& range, const String& value)
   return true;
 }
 
+void setupHandler() {
+  SPIFFS.begin();
+  ftpSrv.begin("esp8266","esp8266");
+}
+
 void loopHandler()
 {
+  ftpSrv.handleFTP();
+
   int openedValue = openedDebouncer.read();
   int closedValue = closedDebouncer.read();
 
@@ -75,12 +83,12 @@ void loopHandler()
   {
     if (lastGoGarageCmd==0)
     {
-      digitalWrite(PIN_GO_GARAGE, HIGH);
+      digitalWrite(PIN_GO_GARAGE, LOW);
       lastGoGarageCmd = millis();
     }
     else if (millis() - lastGoGarageCmd >= GO_CMD_INTERVAL)
     {
-        digitalWrite(PIN_GO_GARAGE, LOW);
+        digitalWrite(PIN_GO_GARAGE, HIGH);
         lastGoGarageCmd = 0;
         goGarage = false;
         Homie.getLogger() << "GoGarage fini !!!" << endl;
@@ -92,12 +100,12 @@ void loopHandler()
   {
     if (lastGoGateCmd==0)
     {
-      digitalWrite(PIN_GO_GATE, HIGH);
+      digitalWrite(PIN_GO_GATE, LOW);
       lastGoGateCmd = millis();
     }
     else if (millis() - lastGoGateCmd >= GO_CMD_INTERVAL)
     {
-        digitalWrite(PIN_GO_GATE, LOW);
+        digitalWrite(PIN_GO_GATE, HIGH);
         lastGoGateCmd = 0;
         goGate = false;
         Homie.getLogger() << "GoGate fini !!!" << endl;
@@ -110,11 +118,17 @@ void setup()
   Serial.begin(115200);
 
   Homie_setFirmware("garage", "1.0.0");
-  Homie.setLoopFunction(loopHandler);
+  Homie.setSetupFunction(setupHandler).setLoopFunction(loopHandler);
   Homie.setup();
+
+  digitalWrite(PIN_GO_GATE, HIGH);
+  digitalWrite(PIN_GO_GARAGE, HIGH);
 
   pinMode(PIN_OPENED_SENSOR,INPUT_PULLUP);
   pinMode(PIN_CLOSED_SENSOR,INPUT_PULLUP);
+
+  pinMode(PIN_GO_GARAGE,OUTPUT);
+  pinMode(PIN_GO_GATE,OUTPUT);
 
   openedDebouncer.attach(PIN_OPENED_SENSOR);
   openedDebouncer.interval(50);
