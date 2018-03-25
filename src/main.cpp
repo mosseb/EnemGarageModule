@@ -113,6 +113,9 @@ void setup()
   Homie.setLoopFunction(loopHandler);
   Homie.setup();
 
+  pinMode(PIN_OPENED_SENSOR,INPUT_PULLUP);
+  pinMode(PIN_CLOSED_SENSOR,INPUT_PULLUP);
+
   openedDebouncer.attach(PIN_OPENED_SENSOR);
   openedDebouncer.interval(50);
 
