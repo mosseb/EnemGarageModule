@@ -7,31 +7,35 @@ const int PIN_CLOSED_SENSOR = D2;
 const int PIN_GO_GARAGE = D6;
 const int PIN_GO_GATE = D7;
 
-const char DOOR_STATE_NOT_INITIALIZED = 'X';
-const char DOOR_STATE_CLOSED = '0';
-const char DOOR_STATE_OPENED = '1';
-const char DOOR_STATE_UNKNOWN = '2';
-
+const char DOOR_STATE_NOT_INITIALIZED = '?';
+const char DOOR_STATE_CLOSED = 'c';
+const char DOOR_STATE_OPENED = 'o';
+const char DOOR_STATE_UNKNOWN = 'u';
+const char DOOR_STATE_INCOHERENT = 'i';
 
 const int GO_CMD_INTERVAL = 1000;
+const int GO_CMD_RETRY_INTERVAL = 3000;
 
 Bounce openedDebouncer = Bounce();
 Bounce closedDebouncer = Bounce();
 HomieNode garageNode("garage", "garage");
 
-char lastDoorState = DOOR_STATE_NOT_INITIALIZED;
+char lastGarageState = DOOR_STATE_NOT_INITIALIZED;
 
-bool goGarage = false;
+char goGarageInitState = DOOR_STATE_NOT_INITIALIZED;
+unsigned long goGarageChrono = 0;
+enum State_enum {NONE, INIT, RELAY_WAIT, WAIT_RETRY};
+uint8_t garageGoState = NONE;
+int goGarageRetry = 0;
+
 bool goGate = false;
-unsigned long lastGoGarageCmd = 0;
 unsigned long lastGoGateCmd = 0;
 
 FtpServer ftpSrv;
 
 bool garageGoHandler(const HomieRange& range, const String& value)
 {
-  goGarage=true;
-  Homie.getLogger() << "GoGarage !!!" << endl;
+  garageGoState = INIT;
   return true;
 }
 
@@ -51,48 +55,89 @@ void loopHandler()
 {
   ftpSrv.handleFTP();
 
+  //1.Mise à jour état garage en fonction des 2 capteurs
+  //1.1.Lecture des 2 capteurs
   int openedValue = openedDebouncer.read();
   int closedValue = closedDebouncer.read();
 
-  char currentDoorState;
+  //1.2.Aggrégation des 2 valeurs de capteurs pour déterminer l'état
+  char currentGarageState;
 
-  if (openedValue && !closedValue)
-  {
-    currentDoorState = DOOR_STATE_OPENED;
-  }
-  if(closedValue && !openedValue)
-  {
-    currentDoorState = DOOR_STATE_CLOSED;
-  }
-  if((!closedValue && !openedValue) || (closedValue && openedValue))
-  {
-    currentDoorState = DOOR_STATE_UNKNOWN;
-  }
+  if(openedValue && !closedValue) { currentGarageState = DOOR_STATE_OPENED; }
+  if(closedValue && !openedValue) { currentGarageState = DOOR_STATE_CLOSED; }
+  if(!closedValue && !openedValue) { currentGarageState = DOOR_STATE_UNKNOWN; }
+  if(closedValue && openedValue) { currentGarageState = DOOR_STATE_INCOHERENT; }
 
-  if (currentDoorState != lastDoorState)
+  //1.3.Si l'état a changé, publication de la propriété homie et stockage
+  if (currentGarageState != lastGarageState)
   {
     char msg[2] = {0,0};
-    msg[0] = currentDoorState;
+    msg[0] = currentGarageState;
     garageNode.setProperty("state").send(msg);
-    lastDoorState = currentDoorState;
+    lastGarageState = currentGarageState;
   }
 
-
-  // GESTION PORTE GARAGE
-  if (goGarage)
+  //2.Gestion porte garage
+  //  Si l'ordre est reçue sur la propriété (goGarage)
+  //  -On mémorise l'état courant
+  //  -On active le relais pendant 1 seconde
+  //  -Au bout de 5 secondes, on vérifie si l'état a changé
+  //  -Si l'état a changé plus rien à faire
+  //  -Si l'état n'a pas changé, on réactive le relais, et ce, 5 fois d'affilé
+  //  -Au bout de 5 fois on abandonne
+  switch(garageGoState)
   {
-    if (lastGoGarageCmd==0)
-    {
+    case INIT:
+      Homie.getLogger() << "Garage door : Relay on, trying to move garage door" << endl;
+      goGarageRetry = 0;
+      goGarageInitState = lastGarageState;
       digitalWrite(PIN_GO_GARAGE, LOW);
-      lastGoGarageCmd = millis();
-    }
-    else if (millis() - lastGoGarageCmd >= GO_CMD_INTERVAL)
-    {
+      goGarageChrono = millis();
+      garageGoState = RELAY_WAIT;
+      break;
+    case RELAY_WAIT:
+      if (millis() - goGarageChrono >= GO_CMD_INTERVAL)
+      {
         digitalWrite(PIN_GO_GARAGE, HIGH);
-        lastGoGarageCmd = 0;
-        goGarage = false;
-        Homie.getLogger() << "GoGarage fini !!!" << endl;
-    }
+        if(goGarageInitState == DOOR_STATE_OPENED || goGarageInitState == DOOR_STATE_CLOSED)
+        {
+          Homie.getLogger() << "Garage door : Relay off, waiting for check" << endl;
+          goGarageChrono = millis();
+          garageGoState = WAIT_RETRY;
+        }
+        else
+        {
+          Homie.getLogger() << "Garage door : Was not initially fully opened or closed, no check" << endl;
+          garageGoState = NONE;
+        }
+      }
+      break;
+    case WAIT_RETRY:
+      if (millis() - goGarageChrono >= GO_CMD_RETRY_INTERVAL)
+      {
+        if(lastGarageState != goGarageInitState)
+        {
+          Homie.getLogger() << "Garage door : Correctly moved" << endl;
+          garageGoState = NONE;
+        }
+        else
+        {
+          if(goGarageRetry < 5)
+          {
+            goGarageRetry++;
+            Homie.getLogger() << "Garage door : Did not move, retry #" << goGarageRetry << endl;
+            goGarageChrono = millis();
+            digitalWrite(PIN_GO_GARAGE, LOW);
+            garageGoState = RELAY_WAIT;
+          }
+          else
+          {
+            Homie.getLogger() << "Garage door : Did not move, too much retries" << endl;
+            garageGoState = NONE;
+          }
+        }
+      }
+      break;
   }
 
   // GESTION PORTAIL
